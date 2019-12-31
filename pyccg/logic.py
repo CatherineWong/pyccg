@@ -2768,7 +2768,7 @@ class Ontology(object):
     signature.update({const.name: const.type for const in self.constants})
     return signature
 
-  def as_ec_sexpr(self, expr):
+  def as_ec_sexpr(self, expr, grammar=None):
     """
     Convert an `nltk.sem.logic` `Expression` to an S-expr string.
     """
@@ -2776,14 +2776,30 @@ class Ontology(object):
     # Expressions which might contain a function reference
     func_exprs = (ConstantExpression, EventVariableExpression,
                   IndividualVariableExpression)
-
+        
     def inner(expr, var_stack):
+      if isinstance(expr, ApplicationExpression):
+          variable_name = expr.pred.variable.name
+      else:
+          variable_name = expr.variable.name
+      if grammar is not None:
+          # Hacky: convert the variable name to the original EC name.
+          if 'f' in variable_name:
+              ind = variable_name.split('f')[1].split('_')[0]
+              if ind != 'cont':
+                  _, _, ec_program = grammar.productions[int(ind)]
+                  variable_name = str(ec_program)
+
       if isinstance(expr, LambdaExpression):
         # Add lambda variable to var map.
-        return "(lambda %s)" % inner(expr.term, var_stack + [expr.variable.name])
+        return "(lambda %s)" % inner(expr.term, var_stack + [variable_name])
       elif isinstance(expr, ApplicationExpression):
+        # Convert to DeBruijn index if bound variable.
+        if variable_name in var_stack:
+            bruijn_index = len(var_stack) - var_stack.index(variable_name) - 1
+            variable_name = "$%i" % bruijn_index
         args = [inner(arg, var_stack) for arg in expr.args]
-        return "(%s %s)" % (expr.pred.variable.name, " ".join(args))
+        return "(%s %s)" % (variable_name, " ".join(args))
       # elif isinstance(expr, AndExpression):
       #   return "(and %s %s)" % (inner(expr.first), inner(expr.second))
       elif isinstance(expr, func_exprs) and expr.variable.name in self.functions_dict:
@@ -2794,26 +2810,31 @@ class Ontology(object):
 
         if arity > 0:
           return ("(lambda " * arity) + \
-              ("(%s %s)" % (expr.variable.name,
+              ("(%s %s)" % (variable_name,
                             " ".join("$%i" % (idx - 1) for idx in range(arity, 0, -1)))) + \
               (")" * arity)
         else:
-          return expr.variable.name
+          return variable_name
       elif isinstance(expr, IndividualVariableExpression):
         bruijn_index = len(var_stack) - var_stack.index(expr.variable.name) - 1
         return "$%i" % bruijn_index
       elif isinstance(expr, ConstantExpression):
-        return expr.variable.name
+        return variable_name
       else:
         raise ValueError("un-handled expression component %r" % expr)
 
     return inner(expr, [])
 
-  def read_ec_sexpr(self, sexpr, typecheck=True):
+  def read_ec_sexpr(self, sexpr, grammar=None, typecheck=True):
     """
     Parse an EC-style S-expression into a typed pyccg logic representation.
     """
     tokens = re.split(r"([()\s])", sexpr)
+    
+    # if grammar is not None:
+    #     for token in tokens:
+    #         # Convert to grammar names
+            
 
     bound_vars = set()
     bound_var_stack = []

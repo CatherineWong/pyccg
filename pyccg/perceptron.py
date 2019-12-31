@@ -6,8 +6,8 @@ from collections import Counter
 import logging
 import numpy as np
 
-from pyccg import chart
-from pyccg.util import softmax, NoParsesError
+from pyccg.pyccg import chart
+from pyccg.pyccg.util import softmax, NoParsesError
 
 L = logging.getLogger(__name__)
 

@@ -7,9 +7,9 @@ from nltk.ccg import chart as nchart
 from nltk.tree import Tree
 import numpy as np
 
-from pyccg import Token
-from pyccg.combinator import *
-from pyccg.logic import *
+from pyccg.pyccg import Token
+from pyccg.pyccg.combinator import *
+from pyccg.pyccg.logic import *
 
 
 printCCGDerivation = nchart.printCCGDerivation

@@ -3,16 +3,16 @@ import logging
 
 import numpy as np
 
-from pyccg import chart
-from pyccg.lexicon import predict_zero_shot, \
+from pyccg.pyccg import chart
+from pyccg.pyccg.lexicon import predict_zero_shot, \
     get_candidate_categories, get_semantic_arity, \
     augment_lexicon_distant, augment_lexicon_cross_situational, augment_lexicon_2afc, \
     augment_lexicon_unification, \
     build_bootstrap_likelihood
-from pyccg.perceptron import \
+from pyccg.pyccg.perceptron import \
     update_perceptron_distant, update_perceptron_cross_situational, update_perceptron_2afc, \
     update_perceptron_supervised
-from pyccg.util import Distribution, NoParsesError
+from pyccg.pyccg.util import Distribution, NoParsesError
 
 
 L = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class WordLearner(object):
                update_perceptron_algo="perceptron",
                prune_entries=None,
                zero_shot_limit=5,
-               max_expr_depth=6,
+               max_expr_depth=5,
                limit_induction=False):
     """
     Args:
@@ -89,7 +89,6 @@ class WordLearner(object):
       query_token_syntaxes = get_candidate_categories(
           self.lexicon, query_tokens, sentence,
           smooth=self.syntax_prior_smooth)
-
       return query_tokens, query_token_syntaxes
 
     L.info("No novel words; searching for new entries for known wordforms.")
@@ -103,7 +102,7 @@ class WordLearner(object):
       query_token_syntaxes.update(
           get_candidate_categories(self.lexicon, [token], sentence,
                                    smooth=self.syntax_prior_smooth))
-
+                                
     # Sort query token list by increasing maximum weight of existing lexical
     # entry. This is a little hack to help the learner prefer to try to infer
     # new meanings for words it is currently more uncertain about.
@@ -130,6 +129,7 @@ class WordLearner(object):
     # Find tokens for which we need to insert lexical entries.
     query_tokens, query_token_syntaxes = \
         self.prepare_lexical_induction(sentence)
+    
     L.info("Inducing new lexical entries for words: %s", ", ".join(query_tokens))
 
     # Augment the lexicon with all entries for novel words which yield the
@@ -226,6 +226,18 @@ class WordLearner(object):
 
     return dist.ensure_support((model1, model2)).normalize()
 
+  def _update_with_ec(self, sentence, model,
+                      augment_lexicon_fn, update_perceptron_fn,
+                      augment_lexicon_args=None,
+                      update_perceptron_args=None):
+    base_augment_lexicon_args = {"max_expr_depth": self.max_expr_depth}
+    base_augment_lexicon_args.update(augment_lexicon_args or {})
+    augment_lexicon_args = base_augment_lexicon_args
+
+    base_update_perceptron_args = {"update_method": self.update_perceptron_algo}
+    base_update_perceptron_args.update(update_perceptron_args or {})
+    update_perceptron_args = base_update_perceptron_args
+    
   def _update_with_example(self, sentence, model,
                            augment_lexicon_fn, update_perceptron_fn,
                            augment_lexicon_args=None,
@@ -349,6 +361,27 @@ class WordLearner(object):
         update_perceptron_fn=update_perceptron_distant,
         augment_lexicon_args=kwargs,
         update_perceptron_args=kwargs)
+        
+  def update_with_distant_ec(self, sentence, model, answer):
+      """
+      Observe a new `sentence -> answer` pair in the context of some `model` and
+      update learner weights.
+
+      Args:
+        sentence: List of token strings
+        model: `Model` instance
+        answer: Desired result from `model.evaluate(lf_result(sentence))`
+
+      Returns:
+        weighted_results: List of weighted parse results for the example.
+      """
+      kwargs = {"answer": answer}
+      return self._update_with_ec(
+          sentence, model,
+          augment_lexicon_fn=augment_lexicon_distant,
+          update_perceptron_fn=update_perceptron_distant,
+          augment_lexicon_args=kwargs,
+          update_perceptron_args=kwargs)
 
   def update_with_cross_situational(self, sentence, model):
     """

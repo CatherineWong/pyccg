@@ -16,10 +16,10 @@ from nltk.ccg.api import PrimitiveCategory, FunctionalCategory, AbstractCCGCateg
 import numpy as np
 from tqdm import tqdm, trange
 
-from pyccg import chart, Token
-from pyccg.combinator import category_search_replace
-from pyccg import logic as l
-from pyccg.util import ConditionalDistribution, Distribution, UniquePriorityQueue, \
+from pyccg.pyccg import chart, Token
+from pyccg.pyccg.combinator import category_search_replace
+from pyccg.pyccg import logic as l
+from pyccg.pyccg.util import ConditionalDistribution, Distribution, UniquePriorityQueue, \
     NoParsesError, tuple_unordered
 
 
@@ -188,7 +188,8 @@ class Lexicon(ccg_lexicon.CCGLexicon):
 
     return ret
 
-  def prune(self, max_entries=3):
+  def prune(self, max_entries=3,
+  min_weight=None):
     """
     Prune low-weight entries from the lexicon in-place.
 
@@ -200,8 +201,11 @@ class Lexicon(ccg_lexicon.CCGLexicon):
     """
     prune_count = 0
     for token in self._entries:
-      entries_t = [token for token in self._entries[token] if token.weight() > 0]
-      entries_t = sorted(entries_t, key=lambda t: t.weight())[:max_entries]
+      min_weight = min_weight if min_weight else 0
+      entries_t = [token for token in self._entries[token] if token.weight() > min_weight]
+      
+      if max_entries:
+          entries_t = sorted(entries_t, key=lambda t: -t.weight())[:max_entries]
       prune_count += len(self._entries[token]) - len(entries_t)
       self._entries[token] = entries_t
 
@@ -547,7 +551,6 @@ def get_category_primitives(category):
   else:
     raise ValueError("unknown category type %r" % category)
 
-
 def get_category_arity(category):
   if isinstance(category, PrimitiveCategory):
     return 0
@@ -716,7 +719,11 @@ def attempt_candidate_parse(lexicon, tokens, candidate_categories,
 
   # Restrict semantic arities based on the observed arities available for each
   # category. Pre-calculate the necessary associations.
-  category_sem_arities = lexicon.category_semantic_arities()
+  try:
+      category_sem_arities = lexicon.category_semantic_arities()
+  except:
+      # TODO (cathywong): now just returns an upper threshold on arities.
+      category_sem_arities = None
 
   lexicon = lexicon.clone()
 
@@ -728,10 +735,14 @@ def attempt_candidate_parse(lexicon, tokens, candidate_categories,
 
     if lexicon.ontology is not None:
       # assign semantic arity based on syntactic arity
-      try:
-        arities = category_sem_arities[syntax]
-      except KeyError:
-        arities = [get_semantic_arity(syntax)]
+      if category_sem_arities is not None:
+          try:
+            arities = category_sem_arities[syntax]
+          except KeyError:
+            arities = [get_semantic_arity(syntax)]
+      else:
+          MAX_ARITY = 4
+          arities = range(MAX_ARITY)
 
       exprs = []
       for arity in arities:
@@ -752,11 +763,12 @@ def attempt_candidate_parse(lexicon, tokens, candidate_categories,
 
   for result, weight, _ in results:
     apparent_types = None
-
+    
+    
     if lexicon.ontology is not None:
       # Retrieve apparent types of each token's dummy var.
       sem = result.label()[0].semantics()
-
+    
       # TODO order of type inference really matters here -- there can be
       # dependencies.
       #
@@ -768,8 +780,13 @@ def attempt_candidate_parse(lexicon, tokens, candidate_categories,
         # Build up type signature from previously inferred types.
         extra_types = {dummy_vars[token].name: apparent_type
                        for token, apparent_type in apparent_types.items()}
-        apparent_types[token] = lexicon.ontology.infer_type(sem, var.name,
-                                                            extra_types=extra_types)
+                       
+        # TODO (cathywong): handle type inference inconsistencies.
+        try:
+            apparent_types[token] = lexicon.ontology.infer_type(sem, var.name,
+                                                                extra_types=extra_types)
+        except:
+            apparent_types[token] = extra_types
 
     yield weight, result, apparent_types
 
@@ -1008,7 +1025,7 @@ def likelihood_2afc(tokens, categories, exprs, sentence_parse, models):
 
 
 def predict_zero_shot(lex, tokens, candidate_syntaxes, sentence, ontology,
-                      model, likelihood_fns, queue_limit=5, max_expr_depth=6):
+                      model, likelihood_fns, queue_limit=10, max_expr_depth=3):
   """
   Make zero-shot predictions of the posterior `p(syntax, meaning | sentence)`
   for each of `tokens`.
@@ -1079,10 +1096,14 @@ def predict_zero_shot(lex, tokens, candidate_syntaxes, sentence, ontology,
           L.debug("Searching for expressions with types: %s",
                   ";".join("%s: %s" % (token, apparent_types[token])
                            for token in token_comb))
-          candidate_exprs = [list(ontology.iter_expressions(
-                              max_depth=max_expr_depth,
-                              type_request=apparent_types[token]))
-                             for token in token_comb]
+            
+          try:
+              candidate_exprs = [list(ontology.iter_expressions(
+                                  max_depth=max_expr_depth,
+                                  type_request=apparent_types[token]))
+                                 for token in token_comb]
+          except:
+              continue
 
           n_expr_combs = np.prod(list(map(len, candidate_exprs)))
           for expr_comb in tqdm(itertools.product(*candidate_exprs),
@@ -1097,7 +1118,7 @@ def predict_zero_shot(lex, tokens, candidate_syntaxes, sentence, ontology,
               dummy_var = dummy_vars[token]
               sentence_semantics = sentence_semantics.replace(dummy_var, token_expr)
             sentence_semantics = sentence_semantics.simplify()
-
+                
             # Compute p(meaning | syntax, sentence, parse)
             logp = sum(likelihood_fn(token_comb, syntax_comb, expr_comb,
                                     sentence_semantics, model)
@@ -1125,7 +1146,7 @@ def predict_zero_shot(lex, tokens, candidate_syntaxes, sentence, ontology,
                 replacement = worst
 
               candidate_queue.put_nowait(replacement)
-
+    
     if candidate_queue.qsize() > 0:
       # We have a result. Quit and don't search at higher depth.
       return candidate_queue, dummy_vars

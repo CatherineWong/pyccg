@@ -10,7 +10,7 @@ import itertools
 from nltk.ccg.api import FunctionalCategory, PrimitiveCategory
 from six import add_metaclass
 
-from pyccg import logic as l
+from pyccg.pyccg import logic as l
 
 
 @add_metaclass(ABCMeta)
